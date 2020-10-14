@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import re
+import nameshouts
 
 from flask import Flask, request, make_response, Response
 
@@ -29,29 +30,40 @@ def handle_message(event_data):
         message = event_data["event"]
         print(event_data)
         pronunciation = None
+        userid = None
         recording = None
 
         if message.get("subtype") is None:
             command = message.get("text")
             channel_id = message["channel"]
+            reply = None
 
-            pronounce = re.search('.* pronounce <@(.+)>', command.lower())
+            pronounce = re.search('.* pronounce (.+)', command.lower())
             if pronounce:
-                userid = pronounce.group(1).lower()
-                pronunciation = PRONUNCIATIONS.get(userid)
-                # TODO: Add default pronounciation using API
+                pronounceTag = re.search('<@(.+)>', pronounce.group(1).lower())
+
+                if pronounceTag is not None:
+                    userid = pronounceTag.group(0).lower()[2:-1]
+                    pronunciation = PRONUNCIATIONS.get(userid)
+                    userid = "<@{user}>".format(user=userid.upper())
+                else:
+                    userid = pronounce.group(1)
+                    pronunciation = nameshouts.getNameShout(pronounce.group(1).lower())
+
+                if pronunciation:
+                    reply = "I found this pronunciation associated with {user}: _{pron}_".format(user=userid, pron=pronunciation)
+                else:
+                    reply = "I couldn't find any pronunciation for {user}".format(user=userid)
 
             record = re.search('my name is pronounced (.+)', command.lower())
             if record:
                 recording = record.group(1)
                 PRONUNCIATIONS[message["user"].lower()] = recording
-            
-            reply = None
-            if pronunciation:
-                reply = "I found this pronunciation associated with <@{user}>: {pron}".format(user=userid.upper(), pron=pronunciation)
-            elif recording:
-                reply = "I've updated your pronunciation to: {rec}".format(rec=recording)
-            else:
+
+                if recording:
+                    reply = "I've updated your pronunciation to: {rec}".format(rec=recording)
+
+            if reply is None:
                 reply = "I don't understand...sorry! Can you try again?"
             
             slack_client.chat_postMessage(channel=channel_id, text=reply)
@@ -59,6 +71,19 @@ def handle_message(event_data):
     thread = Thread(target=send_reply, kwargs={"value": event_data})
     thread.start()
     return Response(status=200)
+
+# An example of one of your Flask app's routes
+@app.route("/")
+def event_hook(request):
+    json_dict = json.loads(request.body.decode("utf-8"))
+    if json_dict["token"] != VERIFICATION_TOKEN:
+        return {"status": 403}
+
+    if "type" in json_dict:
+        if json_dict["type"] == "url_verification":
+            response_dict = {"challenge": json_dict["challenge"]}
+            return response_dict
+    return {"status": 500}
 
 # Start the Flask server
 if __name__ == "__main__":
@@ -69,6 +94,7 @@ if __name__ == "__main__":
     """
     SLACK_BOT_TOKEN = os.environ['SLACK_BOT_TOKEN']
     SLACK_SIGNATURE = os.environ['SLACK_SIGNATURE']
+    VERIFICATION_TOKEN = os.environ['VERIFICATION_TOKEN']
 
     slack_client = WebClient(SLACK_BOT_TOKEN)
     verifier = SignatureVerifier(SLACK_SIGNATURE)
