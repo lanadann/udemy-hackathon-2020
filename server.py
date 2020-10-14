@@ -12,11 +12,39 @@ from slack.signature import SignatureVerifier
 from slackeventsapi import SlackEventAdapter
 from threading import Thread
 
+from texttospeech import text_to_wav
+
 logging.basicConfig(level=logging.DEBUG)
 app = Flask(__name__)
 
 PRONUNCIATIONS = {}
+AUDIO_DICT = {}
 SLACK_SIGNING_SECRET = os.environ['SLACK_SIGNING_SECRET']
+
+
+# -------- helper functions ---------
+def input_response(userid, pronunciation):
+    audio_file = text_to_wav(text=pronunciation, output_file=userid)
+    AUDIO_DICT[userid] = audio_file
+    message = "I've updated your pronunciation. Listen to make sure it sounds correct!"
+
+    return audio_file, message
+
+def output_response_user(userid):
+    audio_file = AUDIO_DICT.get(userid)
+    message = "Here's how <@{}> pronounces their name:".format(userid.upper()) if audio_file \
+        else "I can't find an audio file for this user."
+
+    return audio_file, message
+
+def output_response_other(word):
+    audio_file = AUDIO_DICT.get(word)
+    if not audio_file:
+        audio_file = text_to_wav(text=word, output_file=word)
+        AUDIO_DICT[word] = audio_file
+    message = "Here is my guess at pronouncing {}:".format(word)
+
+    return audio_file, message
 
 # -------- responses when you talk to the bot --------
 slack_events_adapter = SlackEventAdapter(
@@ -36,37 +64,36 @@ def handle_message(event_data):
         if message.get("subtype") is None:
             command = message.get("text")
             channel_id = message["channel"]
-            reply = None
+            reply = "Nothing happened :("
+            audio_file = None
 
             pronounce = re.search('.* pronounce (.+)', command.lower())
-            if pronounce:
-                pronounceTag = re.search('<@(.+)>', pronounce.group(1).lower())
-
-                if pronounceTag is not None:
-                    userid = pronounceTag.group(0).lower()[2:-1]
-                    pronunciation = PRONUNCIATIONS.get(userid)
-                    userid = "<@{user}>".format(user=userid.upper())
-                else:
-                    userid = pronounce.group(1)
-                    pronunciation = nameshouts.getNameShout(pronounce.group(1).lower())
-
-                if pronunciation:
-                    reply = "I found this pronunciation associated with {user}: _{pron}_".format(user=userid, pron=pronunciation)
-                else:
-                    reply = "I couldn't find any pronunciation for {user}".format(user=userid)
-
             record = re.search('my name is pronounced (.+)', command.lower())
+
             if record:
-                recording = record.group(1)
-                PRONUNCIATIONS[message["user"].lower()] = recording
+                userid = message["user"].lower()
+                pronunciation = record.group(1)
+                audio_file, reply= input_response(userid, pronunciation)
 
-                if recording:
-                    reply = "I've updated your pronunciation to: {rec}".format(rec=recording)
+            if pronounce:
+                pronounce_tag = re.search('<@(.+)>', pronounce.group(1).lower())
+                if pronounce_tag:
+                    userid = pronounce_tag.group(0).lower()[2:-1]
+                    audio_file, reply = output_response_user(userid)
+                else:
+                    # pronunciation = nameshouts.getNameShout(pronounce.group(1).lower())
+                    audio_file, reply = output_response_other(pronounce.group(1))
 
-            if reply is None:
-                reply = "I don't understand...sorry! Can you try again?"
-            
             slack_client.chat_postMessage(channel=channel_id, text=reply)
+            if audio_file:
+                try:
+                    response = slack_client.files_upload(
+                        channels=channel_id,
+                        file=audio_file
+                    )
+                    assert response["file"]
+                except SlackApiError as e:
+                    print(f"Got an error: {e.response['error']}")
 
     thread = Thread(target=send_reply, kwargs={"value": event_data})
     thread.start()
