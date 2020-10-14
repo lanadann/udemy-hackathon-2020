@@ -148,7 +148,7 @@ LANGUAGES = {
    "Slovene":"sl",
    "Somali":"so",
    "Southern Sotho":"st",
-   "Spanish; Castilian":"es",
+   "Spanish":"es",
    "Sundanese":"su",
    "Swahili":"sw",
    "Swati":"ss",
