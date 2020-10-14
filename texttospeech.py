@@ -1,7 +1,14 @@
 from google.cloud import texttospeech as tts
 
+def get_voice_name(language_code):
+    client = tts.TextToSpeechClient()
+    response = client.list_voices(language_code=language_code)
+    voices = sorted(response.voices, key=lambda voice: voice.name)
 
-def text_to_wav(text, output_file, voice_name='en-US-Standard-B'):
+    return voices[0].name
+
+def text_to_wav(text, output_file, code='en'):
+    voice_name = get_voice_name(code)
     language_code = '-'.join(voice_name.split('-')[:2])
     text_input = tts.SynthesisInput(text=text)
     voice_params = tts.VoiceSelectionParams(

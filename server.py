@@ -2,7 +2,7 @@ import os
 import json
 import logging
 import re
-import nameshouts
+import pycountry
 
 from flask import Flask, request, make_response, Response
 
@@ -12,6 +12,7 @@ from slack.signature import SignatureVerifier
 from slackeventsapi import SlackEventAdapter
 from threading import Thread
 
+from language_choices import LANGUAGES
 from texttospeech import text_to_wav
 
 logging.basicConfig(level=logging.DEBUG)
@@ -37,12 +38,18 @@ def output_response_user(userid):
 
     return audio_file, message
 
-def output_response_other(word):
-    audio_file = AUDIO_DICT.get(word)
+def output_response_other(word, language):
+    audio_file = None
+    message = None
+    print(LANGUAGES)
+    language_code = LANGUAGES.get(language, 'en')
+    print('hey: {}'.format(language_code))
+    file_name = "{}-{}".format(language_code, word)
+    audio_file = AUDIO_DICT.get(file_name)
     if not audio_file:
-        audio_file = text_to_wav(text=word, output_file=word)
-        AUDIO_DICT[word] = audio_file
-    message = "Here is my guess at pronouncing {}:".format(word)
+        audio_file = text_to_wav(text=word, output_file=file_name, code=language_code)
+        AUDIO_DICT[file_name] = audio_file
+        message = "Here is my guess at pronouncing {}:".format(word)
 
     return audio_file, message
 
@@ -59,7 +66,7 @@ def handle_message(event_data):
         print(event_data)
         pronunciation = None
         userid = None
-        recording = None
+        audio_file = None
 
         if message.get("subtype") is None:
             command = message.get("text")
@@ -73,7 +80,7 @@ def handle_message(event_data):
             if record:
                 userid = message["user"].lower()
                 pronunciation = record.group(1)
-                audio_file, reply= input_response(userid, pronunciation)
+                audio_file, reply = input_response(userid, pronunciation)
 
             if pronounce:
                 pronounce_tag = re.search('<@(.+)>', pronounce.group(1).lower())
@@ -81,8 +88,12 @@ def handle_message(event_data):
                     userid = pronounce_tag.group(0).lower()[2:-1]
                     audio_file, reply = output_response_user(userid)
                 else:
-                    # pronunciation = nameshouts.getNameShout(pronounce.group(1).lower())
-                    audio_file, reply = output_response_other(pronounce.group(1))
+                    pronounce_in = re.search('.* pronounce (.+) in (\w+)', command)
+                    if pronounce_in:
+                        pronounce_language = pronounce_in.group(2)
+                        audio_file, reply = output_response_other(pronounce_in.group(1), pronounce_language)
+                    else:
+                        audio_file, reply = output_response_other(pronounce.group(1), 'English')
 
             slack_client.chat_postMessage(channel=channel_id, text=reply)
             if audio_file:
