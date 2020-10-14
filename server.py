@@ -24,8 +24,9 @@ SLACK_SIGNING_SECRET = os.environ['SLACK_SIGNING_SECRET']
 
 
 # -------- helper functions ---------
-def input_response(userid, pronunciation):
-    audio_file = text_to_wav(text=pronunciation, output_file=userid)
+def input_response(userid, pronunciation, language):
+    language_code = LANGUAGES.get(language, 'en')
+    audio_file = text_to_wav(text=pronunciation, output_file=userid, code=language_code)
     AUDIO_DICT[userid] = audio_file
     message = "I've updated your pronunciation. Listen to make sure it sounds correct!"
 
@@ -41,9 +42,7 @@ def output_response_user(userid):
 def output_response_other(word, language):
     audio_file = None
     message = None
-    print(LANGUAGES)
     language_code = LANGUAGES.get(language, 'en')
-    print('hey: {}'.format(language_code))
     file_name = "{}-{}".format(language_code, word)
     audio_file = AUDIO_DICT.get(file_name)
     if not audio_file:
@@ -79,8 +78,14 @@ def handle_message(event_data):
 
             if record:
                 userid = message["user"].lower()
-                pronunciation = record.group(1)
-                audio_file, reply = input_response(userid, pronunciation)
+                record_in = re.search('my name is pronounced (.+) in (\w+)', command)
+                if record_in:
+                    pronunciation = record_in.group(1)
+                    language = record_in.group(2)
+                else:
+                    pronunciation = record.group(1)
+                    language = 'English'
+                audio_file, reply = input_response(userid, pronunciation, language)
 
             if pronounce:
                 pronounce_tag = re.search('<@(.+)>', pronounce.group(1).lower())

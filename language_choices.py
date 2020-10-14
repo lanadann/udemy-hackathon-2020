@@ -43,6 +43,7 @@ LANGUAGES = {
    "Esperanto":"eo",
    "Estonian":"et",
    "Ewe":"ee",
+   "Filipino":"fil",
    "Faroese":"fo",
    "Fijian":"fj",
    "Finnish":"fi",
