@@ -1,78 +1,76 @@
 import os
 import json
 import logging
+import re
 
 from flask import Flask, request, make_response, Response
 
 from slack.web.client import WebClient
 from slack.errors import SlackApiError
 from slack.signature import SignatureVerifier
-
-from slashcommand import Slash
+from slackeventsapi import SlackEventAdapter
+from threading import Thread
 
 logging.basicConfig(level=logging.DEBUG)
 app = Flask(__name__)
 
 PRONUNCIATIONS = {}
+SLACK_SIGNING_SECRET = os.environ['SLACK_SIGNING_SECRET']
 
-@app.route("/slack/record_pronunciation", methods=["POST"])
-def record_name(): 
-  if not verifier.is_valid_request(request.get_data(), request.headers):
-    return make_response("invalid request", 403)
-  info = request.form
-  PRONUNCIATIONS[info["user_name"]] = info["text"]
-  print(PRONUNCIATIONS)
-#   print(info)
-  message = Slash("Just updated your name pronunciation to: {}".format(info["text"]))
+# -------- responses when you talk to the bot --------
+slack_events_adapter = SlackEventAdapter(
+    SLACK_SIGNING_SECRET, "/slack/events", app
+)
 
-  try:
-    response = slack_client.chat_postMessage(
-      channel='#{}'.format(info["channel_name"]), 
-      text=message.getMessage()
-    )#.get()
-  except SlackApiError as e:
-    logging.error('Request to Slack API Failed: {}.'.format(e.response.status_code))
-    logging.error(e.response)
-    return make_response("", e.response.status_code)
+@slack_events_adapter.on("app_mention")
+def handle_message(event_data):
+    def send_reply(value):
+        event_data = value
+        message = event_data["event"]
+        print(event_data)
+        pronunciation = None
+        recording = None
 
-  return make_response("", response.status_code)
+        if message.get("subtype") is None:
+            command = message.get("text")
+            channel_id = message["channel"]
 
-@app.route("/slack/get_pronunciation", methods=["POST"])
-def get_pronunciation(): 
-  if not verifier.is_valid_request(request.get_data(), request.headers):
-    return make_response("invalid request", 403)
-  info = request.form
-#   print(info)
-  print(PRONUNCIATIONS)
+            pronounce = re.search('.* pronounce <@(.+)>', command.lower())
+            if pronounce:
+                userid = pronounce.group(1).lower()
+                pronunciation = PRONUNCIATIONS.get(userid)
+                # TODO: Add default pronounciation using API
 
-  requested_user = info["text"].replace("@", "")
-  if requested_user in PRONUNCIATIONS:
-      message = Slash("Here's how you pronounce @{}'s name: {}".format(requested_user, PRONUNCIATIONS[requested_user]))
-  else:
-      message = Slash("This user hasn't updated their pronunciation. Maybe try https://www.pronouncenames.com/?")
+            record = re.search('my name is pronounced (.+)', command.lower())
+            if record:
+                recording = record.group(1)
+                PRONUNCIATIONS[message["user"].lower()] = recording
+            
+            reply = None
+            if pronunciation:
+                reply = "I found this pronunciation associated with <@{user}>: {pron}".format(user=userid.upper(), pron=pronunciation)
+            elif recording:
+                reply = "I've updated your pronunciation to: {rec}".format(rec=recording)
+            else:
+                reply = "I don't understand...sorry! Can you try again?"
+            
+            slack_client.chat_postMessage(channel=channel_id, text=reply)
 
-  try:
-    response = slack_client.chat_postMessage(
-      channel='#{}'.format(info["channel_name"]), 
-      text=message.getMessage()
-    )#.get()
-  except SlackApiError as e:
-    logging.error('Request to Slack API Failed: {}.'.format(e.response.status_code))
-    logging.error(e.response)
-    return make_response("", e.response.status_code)
-
-  return make_response("", response.status_code)
+    thread = Thread(target=send_reply, kwargs={"value": event_data})
+    thread.start()
+    return Response(status=200)
 
 # Start the Flask server
 if __name__ == "__main__":
     """
     You need python 3.6+ to run. Run this command "python server.py"
     You'll also need to use ngrok with the port 5000 and copy/paste the URL here:
-    https://api.slack.com/apps/A01C8SP1E30/slash-commands
+    https://api.slack.com/apps/A01C8SP1E30/event-subscriptions
     """
-  SLACK_BOT_TOKEN = os.environ['SLACK_BOT_TOKEN']
-  SLACK_SIGNATURE = os.environ['SLACK_SIGNATURE']
-  slack_client = WebClient(SLACK_BOT_TOKEN)
-  verifier = SignatureVerifier(SLACK_SIGNATURE)
+    SLACK_BOT_TOKEN = os.environ['SLACK_BOT_TOKEN']
+    SLACK_SIGNATURE = os.environ['SLACK_SIGNATURE']
 
-  app.run()
+    slack_client = WebClient(SLACK_BOT_TOKEN)
+    verifier = SignatureVerifier(SLACK_SIGNATURE)
+
+    app.run()
