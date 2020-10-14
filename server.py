@@ -3,6 +3,7 @@ import json
 import logging
 import re
 import pycountry
+import requests
 
 from flask import Flask, request, make_response, Response
 
@@ -34,6 +35,11 @@ def input_response(userid, pronunciation, language):
 
 def output_response_user(userid):
     audio_file = AUDIO_DICT.get(userid)
+    if not audio_file:
+        userName = get_slack_user_name(userid)
+        if userName:
+            return guess_audio_message(userName, userid, LANGUAGES.get('en'))
+
     message = "Here's how <@{}> pronounces their name:".format(userid.upper()) if audio_file \
         else "I can't find an audio file for this user."
 
@@ -46,10 +52,14 @@ def output_response_other(word, language):
     file_name = "{}-{}".format(language_code, word)
     audio_file = AUDIO_DICT.get(file_name)
     if not audio_file:
-        audio_file = text_to_wav(text=word, output_file=file_name, code=language_code)
-        AUDIO_DICT[file_name] = audio_file
-        message = "Here is my guess at pronouncing {}:".format(word)
+        return guess_audio_message(word, file_name, language_code)
 
+    return audio_file, message
+
+def guess_audio_message(name, filename, language_code):
+    audio_file = text_to_wav(text=name, output_file=filename, code=language_code)
+    AUDIO_DICT[filename] = audio_file
+    message = "Here is my guess at pronouncing {}:".format(name)
     return audio_file, message
 
 # -------- responses when you talk to the bot --------
@@ -114,6 +124,23 @@ def handle_message(event_data):
     thread = Thread(target=send_reply, kwargs={"value": event_data})
     thread.start()
     return Response(status=200)
+
+
+# Get name of slack user from the user ID
+def get_slack_user_name(id):
+    url = 'https://slack.com/api/users.profile.get'
+    params = {
+        'token': SLACK_BOT_TOKEN, 'user': id, 'pretty': '1'
+    }
+    response = requests.get(url, params=params)
+    json_data = response.json() if response and response.status_code == 200 else None
+
+    if json_data and 'profile' in json_data:
+        if 'real_name' in json_data['profile']:
+            return json_data['profile']['real_name']
+
+    return None
+
 
 # An example of one of your Flask app's routes
 @app.route("/")
