@@ -26,7 +26,7 @@ SLACK_SIGNING_SECRET = os.environ['SLACK_SIGNING_SECRET']
 
 # -------- helper functions ---------
 def input_response(userid, pronunciation, language):
-    language_code = LANGUAGES.get(language, 'en')
+    language_code = LANGUAGES.get(language.lower(), 'en')
     audio_file = text_to_wav(text=pronunciation, output_file=userid, code=language_code)
     AUDIO_DICT[userid] = audio_file
     message = "I've updated your pronunciation. Listen to make sure it sounds correct!"
@@ -36,9 +36,10 @@ def input_response(userid, pronunciation, language):
 def output_response_user(userid):
     audio_file = AUDIO_DICT.get(userid)
     if not audio_file:
-        userName = get_slack_user_name(userid)
-        if userName:
-            return guess_audio_message(userName, userid, LANGUAGES.get('en'))
+        name = get_slack_user_name(userid)
+        if name:
+            message = "That user has not set a custom pronunciation yet. "
+            return guess_audio_message(name, userid, LANGUAGES.get('English'), message)
 
     message = "Here's how <@{}> pronounces their name:".format(userid.upper()) if audio_file \
         else "I can't find an audio file for this user."
@@ -48,7 +49,7 @@ def output_response_user(userid):
 def output_response_other(word, language):
     audio_file = None
     message = None
-    language_code = LANGUAGES.get(language, 'en')
+    language_code = LANGUAGES.get(language.lower(), 'en')
     file_name = "{}-{}".format(language_code, word)
     audio_file = AUDIO_DICT.get(file_name)
     if not audio_file:
@@ -56,10 +57,10 @@ def output_response_other(word, language):
 
     return audio_file, message
 
-def guess_audio_message(name, filename, language_code):
+def guess_audio_message(name, filename, language_code, message=''):
     audio_file = text_to_wav(text=name, output_file=filename, code=language_code)
     AUDIO_DICT[filename] = audio_file
-    message = "Here is my guess at pronouncing {}:".format(name)
+    message += "Here is my guess at pronouncing {}:".format(name)
     return audio_file, message
 
 # -------- responses when you talk to the bot --------
@@ -83,6 +84,26 @@ def handle_message(event_data):
             reply = "Nothing happened :("
             audio_file = None
 
+            ask_for_help =re.search('.* help', command.lower())
+            if ask_for_help:
+                reply = """Here are the commands I know:
+* `pronounce <name>`: Pronounce a name
+* `pronounce <name> in <language>`: Pronounce a name in a specific dialect
+* `my name is pronounced <name>`: Save a pronunciation to your Slack user
+* `my name is pronounced <name> in <language>`: Save a pronunciation in a specific dialect to your Slack user
+* `pronounce @<user>`: Load a user's name pronunciation. I will guess how it sounds if it has not been set.
+
+Here are some examples:
+```
+@Say My Name pronounce Jilles in Dutch
+```
+```
+@Say My Name my name is pronounced Llibert in Spanish
+```
+```
+@Say My Name pronounce @lana.dann
+```
+"""
             pronounce = re.search('.* pronounce (.+)', command.lower())
             record = re.search('my name is pronounced (.+)', command.lower())
 
@@ -130,7 +151,7 @@ def handle_message(event_data):
 def get_slack_user_name(id):
     url = 'https://slack.com/api/users.profile.get'
     params = {
-        'token': SLACK_BOT_TOKEN, 'user': id, 'pretty': '1'
+        'token': SLACK_BOT_TOKEN, 'user': id.upper(), 'pretty': '1'
     }
     response = requests.get(url, params=params)
     json_data = response.json() if response and response.status_code == 200 else None
